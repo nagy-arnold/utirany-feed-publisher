@@ -1,4 +1,4 @@
-﻿export interface Env {
+export interface Env {
   TRANSIT_FEEDS: {
     get(
       key: string,
@@ -56,23 +56,26 @@ export default {
 
     const ifNoneMatch = request.headers.get('if-none-match');
 
-    const object = await env.TRANSIT_FEEDS.get(key, {
-      onlyIf: ifNoneMatch ? { etagDoesNotMatch: ifNoneMatch } : undefined,
-    });
-
-    if (object === null) {
-      if (ifNoneMatch) {
-        const head = await env.TRANSIT_FEEDS.head(key);
-        if (head && matchesEtag(ifNoneMatch, head.etag)) {
-          return new Response(null, {
-            status: 304,
-            headers: {
-              ETag: head.etag,
-              'Cache-Control': getCacheControl(key),
-            },
-          });
-        }
+    // For conditional requests, check HEAD metadata first for fast 304 response
+    if (ifNoneMatch) {
+      const head = await env.TRANSIT_FEEDS.head(key);
+      if (!head) {
+        return new Response('Not Found', { status: 404 });
       }
+      const objectEtag = head.httpEtag ?? head.etag;
+      if (matchesEtag(ifNoneMatch, objectEtag)) {
+        return new Response(null, {
+          status: 304,
+          headers: {
+            ETag: objectEtag,
+            'Cache-Control': getCacheControl(key),
+          },
+        });
+      }
+    }
+
+    const object = await env.TRANSIT_FEEDS.get(key);
+    if (object === null) {
       return new Response('Not Found', { status: 404 });
     }
 
