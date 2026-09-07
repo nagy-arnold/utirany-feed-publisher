@@ -1,4 +1,4 @@
-﻿import {
+import {
   AcquiredCandidate,
   DiscoveredTransitFeed,
   FeedPublicationStatus,
@@ -7,6 +7,8 @@
   TransitFeedSourceAdapter,
 } from '../types.js';
 import { MenetBrandClient } from './client.js';
+import { QuotaExhaustedError } from './errors.js';
+import { extractMenetBrandDatabase, validateMenetBrandDatabaseSchema } from './extract.js';
 
 export interface MenetBrandFeedMapping {
   readonly configId: string;
@@ -17,6 +19,12 @@ export interface MenetBrandFeedMapping {
   readonly redistributionPolicy: RedistributionPolicy;
 }
 
+/**
+ * Feeds available through MenetBrand.
+ * Note: Following OX-DATA-3.1 redistribution policy audit, only Szeged canonical feed
+ * is classified as PUBLIC_REDISTRIBUTION_ALLOWED. All other aggregator feeds without
+ * independently verified redistribution rights are classified as UNKNOWN.
+ */
 export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
   {
     configId: 'szeged',
@@ -32,7 +40,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'MÁV-Start & Volánbusz (Országos)',
     region: 'Országos',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'pecs',
@@ -40,7 +48,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Pécs',
     region: 'Dél-Dunántúl',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'miskolc',
@@ -48,7 +56,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Miskolc',
     region: 'Észak-Magyarország',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'kecskemet',
@@ -56,7 +64,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Kecskemét',
     region: 'Dél-Alföld',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'debrecen',
@@ -64,7 +72,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Debrecen',
     region: 'Észak-Alföld',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'kaposvar',
@@ -72,7 +80,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Kaposvár',
     region: 'Dél-Dunántúl',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'szombathely',
@@ -80,7 +88,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Szombathely',
     region: 'Nyugat-Dunántúl',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'tatabanya',
@@ -88,7 +96,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Tatabánya',
     region: 'Közép-Dunántúl',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
   {
     configId: 'veszprem',
@@ -96,7 +104,7 @@ export const KNOWN_MENETBRAND_FEEDS: MenetBrandFeedMapping[] = [
     displayName: 'Veszprém',
     region: 'Közép-Dunántúl',
     defaultStatus: 'RAW_MIRROR',
-    redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+    redistributionPolicy: 'UNKNOWN',
   },
 ];
 
@@ -105,6 +113,8 @@ export class MenetBrandSourceAdapter implements TransitFeedSourceAdapter {
   private readonly client: MenetBrandClient;
   private readonly feedMapping: Map<string, MenetBrandFeedMapping>;
   private readonly reverseMapping: Map<string, MenetBrandFeedMapping>;
+  private isCircuitBroken = false;
+  private circuitBrokenError: QuotaExhaustedError | null = null;
 
   constructor(options: { client?: MenetBrandClient; mappings?: MenetBrandFeedMapping[] } = {}) {
     this.client = options.client ?? new MenetBrandClient();
@@ -113,7 +123,20 @@ export class MenetBrandSourceAdapter implements TransitFeedSourceAdapter {
     this.reverseMapping = new Map(mappings.map((m) => [m.feedId, m]));
   }
 
+  get isCircuitBreakerTripped(): boolean {
+    return this.isCircuitBroken;
+  }
+
+  resetCircuitBreaker(): void {
+    this.isCircuitBroken = false;
+    this.circuitBrokenError = null;
+  }
+
   async discoverFeeds(): Promise<DiscoveredTransitFeed[]> {
+    if (this.isCircuitBroken) {
+      return this.fallbackKnownFeeds();
+    }
+
     if (!this.client.isConfigured) {
       return this.fallbackKnownFeeds();
     }
@@ -122,7 +145,6 @@ export class MenetBrandSourceAdapter implements TransitFeedSourceAdapter {
       const config = await this.client.config();
       const discovered: DiscoveredTransitFeed[] = [];
 
-      // Inspect enabled release_configs
       for (const [key, rc] of Object.entries(config.release_configs)) {
         if (!rc.enabled && key !== 'szeged' && key !== 'mav_volan') continue;
         const configId = rc.config_id || key;
@@ -159,7 +181,10 @@ export class MenetBrandSourceAdapter implements TransitFeedSourceAdapter {
       }
 
       return discovered.sort((a, b) => a.feedId.localeCompare(b.feedId));
-    } catch {
+    } catch (err: any) {
+      if (err instanceof QuotaExhaustedError || err.message?.includes('ERROR_API_KEY_LIMIT_REACHED')) {
+        this.tripCircuitBreaker(err);
+      }
       return this.fallbackKnownFeeds();
     }
   }
@@ -194,6 +219,10 @@ export class MenetBrandSourceAdapter implements TransitFeedSourceAdapter {
     coverageEnd?: string;
     upstreamVersion?: string;
   } | null> {
+    if (this.isCircuitBroken) {
+      throw this.circuitBrokenError ?? new QuotaExhaustedError('MenetBrand circuit breaker is active (quota exceeded)');
+    }
+
     const mapping = this.reverseMapping.get(feedId);
     if (!mapping) return null;
 
@@ -205,28 +234,61 @@ export class MenetBrandSourceAdapter implements TransitFeedSourceAdapter {
         coverageEnd: info.trips_end,
         upstreamVersion: info.created,
       };
-    } catch {
+    } catch (err: any) {
+      if (err instanceof QuotaExhaustedError || err.message?.includes('ERROR_API_KEY_LIMIT_REACHED')) {
+        this.tripCircuitBreaker(err);
+        throw this.circuitBrokenError;
+      }
       return null;
     }
   }
 
   async acquireCandidate(feed: DiscoveredTransitFeed): Promise<AcquiredCandidate> {
+    if (this.isCircuitBroken) {
+      throw this.circuitBrokenError ?? new QuotaExhaustedError('MenetBrand circuit breaker is active (quota exceeded)');
+    }
+
     const mapping = this.reverseMapping.get(feed.feedId);
     if (!mapping) {
       throw new Error(`Unknown feedId '${feed.feedId}' for MenetBrand adapter`);
     }
 
-    const artifact = await this.client.download(mapping.configId, 'zip', '10');
+    let artifact: { bytes: Buffer; filename?: string | null; contentType?: string | null };
+    try {
+      artifact = await this.client.download(mapping.configId, 'zip', '10');
+    } catch (err: any) {
+      if (err instanceof QuotaExhaustedError || err.message?.includes('ERROR_API_KEY_LIMIT_REACHED')) {
+        this.tripCircuitBreaker(err);
+        throw this.circuitBrokenError;
+      }
+      throw err;
+    }
+
+    // Safely extract SQLite database from ZIP archive and verify SQLite signature and schema
+    const extracted = extractMenetBrandDatabase(artifact.bytes);
+    const schemaVal = validateMenetBrandDatabaseSchema(extracted.databaseBuffer);
+    if (!schemaVal.isValid) {
+      throw new Error(`Invalid MenetBrand SQLite v5 schema for '${feed.feedId}': ${schemaVal.issues.join('; ')}`);
+    }
+
     return {
       feedId: feed.feedId,
       sourceHash: feed.sourceHash,
-      bytes: artifact.bytes,
-      filename: artifact.filename ?? `${mapping.configId}.db`,
-      contentType: artifact.contentType ?? 'application/octet-stream',
+      bytes: extracted.databaseBuffer,
+      filename: `${mapping.configId}.db`,
+      contentType: 'application/x-sqlite3',
       acquiredAt: new Date().toISOString(),
       format: 'menetbrand_sqlite_v5',
       sourceMetadata: feed.preferredSource,
     };
+  }
+
+  private tripCircuitBreaker(err: any): void {
+    this.isCircuitBroken = true;
+    this.circuitBrokenError =
+      err instanceof QuotaExhaustedError
+        ? err
+        : new QuotaExhaustedError(err?.message ?? 'MenetBrand daily API quota exceeded');
   }
 }
 

@@ -1,7 +1,8 @@
-﻿import { DatabaseSync } from 'node:sqlite';
+import { DatabaseSync } from 'node:sqlite';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
+import { extractMenetBrandDatabase } from '../sources/menetbrand/extract.js';
 
 export function exportMenetBrandDatabaseToGtfs(
   databasePathOrBuffer: string | Buffer,
@@ -12,9 +13,10 @@ export function exportMenetBrandDatabaseToGtfs(
   if (typeof databasePathOrBuffer === 'string') {
     dbPath = databasePathOrBuffer;
   } else {
+    const extracted = extractMenetBrandDatabase(databasePathOrBuffer);
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mb-db-'));
     dbPath = path.join(tmpDir, 'gtfs.db');
-    fs.writeFileSync(dbPath, databasePathOrBuffer);
+    fs.writeFileSync(dbPath, extracted.databaseBuffer);
     tempFileCreated = true;
   }
 

@@ -1,4 +1,4 @@
-﻿import {
+import {
   AcquiredCandidate,
   DiscoveredTransitFeed,
   SourceMetadata,
@@ -8,9 +8,9 @@
 export const MAV_OFFICIAL_SOURCE_METADATA: SourceMetadata = {
   provider: 'MÁV-START Zrt. / MÁV Csoport',
   authorityLevel: 'OFFICIAL_DIRECT',
-  license: 'MÁV Csoport Egyedi Felhasználási Feltételek',
+  license: 'MÁV Csoport Egyedi Felhasználási Feltételek (Corporate Registration Required)',
   attribution: 'MÁV-START Zrt. (mavcsoport.hu)',
-  redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
+  redistributionPolicy: 'PRIVATE_ACQUISITION_ONLY',
   priority: 2,
   endpoint: 'https://www.mavcsoport.hu/gtfs-igenybejelento',
   notes: 'Direct official MÁV feed requires corporate registration and individual basic auth credentials',
@@ -33,6 +33,11 @@ export class MavOfficialGtfsSourceAdapter implements TransitFeedSourceAdapter {
   }
 
   async discoverFeeds(): Promise<DiscoveredTransitFeed[]> {
+    // Honest representation: only claim operational feeds when credentials and endpoint are actually configured
+    if (!this.isConfigured) {
+      return [];
+    }
+
     return [
       {
         feedId: 'mav-volan',
@@ -60,7 +65,7 @@ export class MavOfficialGtfsSourceAdapter implements TransitFeedSourceAdapter {
   async acquireCandidate(_feed: DiscoveredTransitFeed): Promise<AcquiredCandidate> {
     if (!this.isConfigured) {
       throw new Error(
-        'Direct MÁV official GTFS source is not configured (requires registration via https://www.mavcsoport.hu/gtfs-igenybejelento). Use MenetBrand mav_volan as VERIFIED_AGGREGATOR.'
+        'Direct MÁV official GTFS source is not configured (requires registration via https://www.mavcsoport.hu/gtfs-igenybejelento). Use MenetBrand mav_volan as VERIFIED_AGGREGATOR.',
       );
     }
     throw new Error('MÁV official source acquisition not yet activated');

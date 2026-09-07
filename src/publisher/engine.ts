@@ -13,6 +13,7 @@ import { createZip, readZipEntries } from '../gtfs/zip.js';
 import { MemoryR2Storage } from '../r2/memory.js';
 import { S3R2Storage } from '../r2/client.js';
 import { R2Storage } from '../r2/types.js';
+import { QuotaExhaustedError } from '../sources/menetbrand/errors.js';
 import { SourceRegistry } from '../sources/registry.js';
 import { DiscoveredTransitFeed } from '../sources/types.js';
 import { cleanFeedHistoricArtifacts } from './retention.js';
@@ -58,6 +59,7 @@ export class PublisherEngine {
     let publishedCount = 0;
     let rejectedCount = 0;
     let gatedCount = 0;
+    let menetbrandQuotaExhausted = false;
 
     const activeManifests: Array<{ manifest: FeedManifest; displayName: string; region: string }> = [];
     const feedResults: PublisherRunSummary['feedResults'][number][] = [];
@@ -70,7 +72,7 @@ export class PublisherEngine {
           feedId: feed.feedId,
           status: feed.publicationStatus,
           action: 'GATED_LICENSE',
-          message: `Public mirroring gated: policy is ${feed.preferredSource.redistributionPolicy}`,
+          message: `Public mirroring gated: redistribution policy is '${feed.preferredSource.redistributionPolicy}' (evidence required for public R2 namespace)`,
         });
         continue;
       }
@@ -84,10 +86,72 @@ export class PublisherEngine {
         } catch {}
       }
 
-      // 2. Metadata check to avoid unnecessary downloads
       const adapter = this.sourceRegistry.getAdapterForFeed(feed);
+
+      // Check if MenetBrand circuit breaker has already tripped in this run
+      if (adapter.name === 'menetbrand' && menetbrandQuotaExhausted) {
+        if (existingManifest) {
+          activeManifests.push({
+            manifest: existingManifest,
+            displayName: feed.displayName,
+            region: feed.region,
+          });
+          feedResults.push({
+            feedId: feed.feedId,
+            status: existingManifest.status,
+            action: 'RETAINED_LKG',
+            message: `MenetBrand API quota exhausted (circuit breaker tripped). 0 calls made; retaining active LKG.`,
+            sizeBytes: existingManifest.sizeBytes,
+            sha256: existingManifest.sha256,
+          });
+        } else {
+          feedResults.push({
+            feedId: feed.feedId,
+            status: feed.publicationStatus,
+            action: 'FAILED',
+            message: `MenetBrand API quota exhausted (circuit breaker tripped). No prior LKG.`,
+          });
+        }
+        continue;
+      }
+
+      // 2. Metadata check to avoid unnecessary downloads
       metadataCheckedCount++;
-      const meta = await adapter.fetchMetadata(feed.feedId).catch(() => null);
+      let meta: { sourceHash: string; coverageStart?: string; coverageEnd?: string; upstreamVersion?: string } | null = null;
+      try {
+        meta = await adapter.fetchMetadata(feed.feedId);
+      } catch (err: any) {
+        if (
+          err instanceof QuotaExhaustedError ||
+          err.message?.includes('ERROR_API_KEY_LIMIT_REACHED') ||
+          err.message?.includes('circuit breaker is active')
+        ) {
+          menetbrandQuotaExhausted = true;
+          if (existingManifest) {
+            activeManifests.push({
+              manifest: existingManifest,
+              displayName: feed.displayName,
+              region: feed.region,
+            });
+            feedResults.push({
+              feedId: feed.feedId,
+              status: existingManifest.status,
+              action: 'RETAINED_LKG',
+              message: `MenetBrand API quota exhausted on metadata check (${err.message}). Retaining active LKG.`,
+              sizeBytes: existingManifest.sizeBytes,
+              sha256: existingManifest.sha256,
+            });
+          } else {
+            feedResults.push({
+              feedId: feed.feedId,
+              status: feed.publicationStatus,
+              action: 'FAILED',
+              message: `MenetBrand API quota exhausted on metadata check: ${err.message}`,
+            });
+          }
+          continue;
+        }
+      }
 
       if (
         meta &&
@@ -135,6 +199,14 @@ export class PublisherEngine {
           candidateSourceHash = candidate.sourceHash;
         }
       } catch (err: any) {
+        if (
+          err instanceof QuotaExhaustedError ||
+          err.message?.includes('ERROR_API_KEY_LIMIT_REACHED') ||
+          err.message?.includes('circuit breaker is active')
+        ) {
+          menetbrandQuotaExhausted = true;
+        }
+
         // If acquisition fails and it's szeged without an existing manifest, check seed archive
         const seedPath = path.resolve(process.cwd(), 'seed/szeged-canonical-gtfs.zip');
         if (feed.feedId === 'szeged' && !existingManifest && fs.existsSync(seedPath)) {
@@ -371,6 +443,7 @@ export class PublisherEngine {
       publishedCount,
       rejectedCount,
       gatedCount,
+      menetbrandQuotaExhausted,
       appReadyFeeds: activeManifests.filter((m) => m.manifest.status === 'APP_READY').map((m) => m.manifest.feedId),
       rawMirrorFeeds: activeManifests.filter((m) => m.manifest.status === 'RAW_MIRROR').map((m) => m.manifest.feedId),
       feedResults,

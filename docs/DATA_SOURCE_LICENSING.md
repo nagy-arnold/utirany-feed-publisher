@@ -1,4 +1,4 @@
-﻿# Data Source Licensing & Redistribution Policy
+# Data Source Licensing & Redistribution Policy
 
 Útirány is a nationwide public-transport platform designed to respect open data licenses, provider contracts, and copyright laws. This document audits each upstream source and records its technical redistribution status.
 
@@ -37,14 +37,19 @@
 
 ### 3. MÁV / Volánbusz — Nationwide Rail & Regional Bus
 - **Provider:** MÁV-START Zrt. / MÁV Csoport
-- **Authority Level:** `VERIFIED_AGGREGATOR` (via MenetBrand `mav_volan`) / `OFFICIAL_DIRECT` (via registration)
-- **License:** Public passenger transport schedule data.
+- **Authority Level:** `OFFICIAL_DIRECT` (Direct Portal) / `VERIFIED_AGGREGATOR` (via MenetBrand `mav_volan`)
+- **Direct Official Portal:** Registration required at `https://www.mavcsoport.hu/gtfs-igenybejelento`.
+- **Three-Way Modeling Distinction:**
+  1. **Acquisition Availability:** Direct official source is `UNCONFIGURED` without credentials (adapter truthfully returns empty list `[]` during discovery); acquisition is available only via aggregator (`mav_volan`).
+  2. **Redistribution Permission:** **`UNKNOWN`** / **`PRIVATE_ACQUISITION_ONLY`**. Without direct formal redistribution rights or signed open-data redistribution agreement, nationwide MÁV feeds are blocked from the public R2 bucket by the engine gate.
+  3. **Application Readiness:** **`NOT_READY`** (requires nationwide route matching, multi-agency ticketing, and walking connectivity).
+- **License:** Public passenger transport schedule data (direct terms non-standardized).
 - **Attribution Requirement:** *"Forrás: MÁV-START Zrt. / Volánbusz Zrt."*
-- **Policy:** **`PUBLIC_REDISTRIBUTION_ALLOWED`**
-- **Evidence:** Timetables are public service schedules. Direct official download requires corporate registration via `https://www.mavcsoport.hu/gtfs-igenybejelento`. Until direct MÁV credentials are provisioned, MenetBrand `mav_volan` is utilized as the verified aggregator.
+- **Policy:** **`PRIVATE_ACQUISITION_ONLY`** / **`UNKNOWN`** (Gated from public R2 publication).
 
-### 4. Other Municipal Feeds (Debrecen, Pécs, Miskolc, Kecskemét, etc.)
-- **Provider:** MenetBrand municipal/regional configurations.
+### 4. Regional Municipal Feeds (Debrecen, Pécs, Miskolc, Kecskemét, Tatabánya, etc.)
+- **Provider:** MenetBrand regional configurations.
 - **Authority Level:** `VERIFIED_AGGREGATOR`
-- **Policy:** Currently **`PUBLIC_REDISTRIBUTION_ALLOWED`** for public regional transit schedules, mapped to `RAW_MIRROR` in the public catalog.
-- **Any newly discovered feed with ambiguous status defaults to `UNKNOWN`** and is blocked by the engine until audited.
+- **Policy:** Audited as **`UNKNOWN`** for public redistribution.
+- **Enforced Safety Gate:** Only feeds with explicit public redistribution proof (`budapest` via BKK CC-BY open data, and `szeged` via explicit canonical app contract) are published to the public R2 bucket. All other regional feeds are acquired for validation/compatibility analysis but blocked from public distribution until individual licensing agreements are finalized.
+- **Default Policy for Unclassified Feeds:** All newly discovered feeds default strictly to **`UNKNOWN`**.

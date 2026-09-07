@@ -1,6 +1,3 @@
-﻿import { FeedManifest } from '../catalog/manifest.js';
-import { DiscoveredTransitFeed } from '../sources/types.js';
-
 export interface PublisherRunSummary {
   readonly startTime: string;
   readonly endTime: string;
@@ -13,6 +10,7 @@ export interface PublisherRunSummary {
   readonly publishedCount: number;
   readonly rejectedCount: number;
   readonly gatedCount: number;
+  readonly menetbrandQuotaExhausted: boolean;
   readonly appReadyFeeds: string[];
   readonly rawMirrorFeeds: string[];
   readonly feedResults: Array<{
@@ -38,6 +36,17 @@ export function formatStepSummaryMarkdown(summary: PublisherRunSummary): string 
     `**Execution Mode:** ${summary.isDryRun ? '🟡 DRY RUN (No R2 writes)' : '🟢 PRODUCTION PUBLISH'}`,
     `**Duration:** ${summary.durationSeconds.toFixed(1)}s (${summary.startTime} → ${summary.endTime})`,
     ``,
+  ];
+
+  if (summary.menetbrandQuotaExhausted) {
+    lines.push(
+      `> [!WARNING]`,
+      `> **MENETBRAND_QUOTA_EXHAUSTED:** Upstream MenetBrand API quota was reached during this execution. The circuit breaker activated immediately: 0 further MenetBrand calls were made, active LKGs were preserved, and independent providers (such as BKK) continued without interruption.`,
+      ``,
+    );
+  }
+
+  lines.push(
     `### Key Invariants & Status`,
     `- **Szeged Canonical (APP_READY):** ${szegedResult ? `${szegedResult.action} (${szegedResult.status})` : 'NOT_RUN'}`,
     `- **Budapest BKK (RAW_MIRROR):** ${budapestResult ? `${budapestResult.action} (${budapestResult.status})` : 'NOT_RUN'}`,
@@ -60,7 +69,7 @@ export function formatStepSummaryMarkdown(summary: PublisherRunSummary): string 
     `### Per-Feed Breakdown`,
     `| Feed ID | Status | Action | Size | Details |`,
     `|---|---|---|---|---|`,
-  ];
+  );
 
   for (const r of summary.feedResults) {
     const sizeStr = r.sizeBytes ? `${(r.sizeBytes / (1024 * 1024)).toFixed(2)} MB` : '-';

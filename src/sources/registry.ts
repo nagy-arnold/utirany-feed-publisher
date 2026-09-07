@@ -1,4 +1,4 @@
-﻿import { BkkStaticGtfsSourceAdapter } from './bkk/adapter.js';
+import { BkkStaticGtfsSourceAdapter } from './bkk/adapter.js';
 import { MavOfficialGtfsSourceAdapter } from './mav/adapter.js';
 import { MenetBrandSourceAdapter } from './menetbrand/adapter.js';
 import { DiscoveredTransitFeed, SourceMetadata, TransitFeedSourceAdapter } from './types.js';
@@ -28,7 +28,7 @@ export const CANONICAL_FEED_DEFINITIONS: FeedDefinition[] = [
   },
   {
     feedId: 'mav-volan',
-    displayName: 'MÁV-Start & Volánbusz',
+    displayName: 'MÁV-Start & Volánbusz (Országos)',
     region: 'Országos',
     preferredAdapter: 'menetbrand',
     fallbackAdapters: ['mav_official'],
@@ -37,6 +37,7 @@ export const CANONICAL_FEED_DEFINITIONS: FeedDefinition[] = [
 
 export class SourceRegistry {
   private readonly adapters: Map<string, TransitFeedSourceAdapter> = new Map();
+  private cachedDiscoveredFeeds: DiscoveredTransitFeed[] | null = null;
 
   constructor(adapters: TransitFeedSourceAdapter[] = []) {
     for (const adapter of adapters) {
@@ -58,19 +59,30 @@ export class SourceRegistry {
 
   registerAdapter(adapter: TransitFeedSourceAdapter): void {
     this.adapters.set(adapter.name, adapter);
+    this.cachedDiscoveredFeeds = null;
   }
 
   getAdapter(name: string): TransitFeedSourceAdapter | undefined {
     return this.adapters.get(name);
   }
 
-  async discoverAllFeeds(): Promise<DiscoveredTransitFeed[]> {
-    const allDiscovered = new Map<string, DiscoveredTransitFeed>();
+  clearCache(): void {
+    this.cachedDiscoveredFeeds = null;
+  }
 
-    // 1. Gather discovered feeds from all adapters
-    for (const [, adapter] of this.adapters) {
+  async discoverAllFeeds(options: { forceRefresh?: boolean } = {}): Promise<DiscoveredTransitFeed[]> {
+    if (!options.forceRefresh && this.cachedDiscoveredFeeds) {
+      return this.cachedDiscoveredFeeds;
+    }
+
+    const allDiscovered = new Map<string, DiscoveredTransitFeed>();
+    const adapterFeedsMap = new Map<string, DiscoveredTransitFeed[]>();
+
+    // 1. Gather discovered feeds from each adapter exactly ONCE
+    for (const [name, adapter] of this.adapters) {
       try {
         const feeds = await adapter.discoverFeeds();
+        adapterFeedsMap.set(name, feeds);
         for (const feed of feeds) {
           const existing = allDiscovered.get(feed.feedId);
           if (!existing) {
@@ -80,7 +92,7 @@ export class SourceRegistry {
             const combinedSources: SourceMetadata[] = [
               ...existing.allSources,
               ...feed.allSources.filter(
-                (s) => !existing.allSources.some((es) => es.provider === s.provider)
+                (s) => !existing.allSources.some((es) => es.provider === s.provider),
               ),
             ];
             if (!combinedSources.some((s) => s.provider === feed.preferredSource.provider)) {
@@ -98,31 +110,31 @@ export class SourceRegistry {
           }
         }
       } catch {
+        adapterFeedsMap.set(name, []);
         // Ignore single adapter discovery failure
       }
     }
 
-    // 2. Align with known canonical feed priorities
+    // 2. Align with known canonical feed priorities using the in-memory snapshot (NO duplicate discovery calls!)
     for (const def of CANONICAL_FEED_DEFINITIONS) {
       const feed = allDiscovered.get(def.feedId);
       if (feed) {
-        const preferred = this.adapters.get(def.preferredAdapter);
-        if (preferred) {
-          const adapterFeeds = await preferred.discoverFeeds().catch(() => []);
-          const preferredFeed = adapterFeeds.find((f) => f.feedId === def.feedId);
-          if (preferredFeed) {
-            allDiscovered.set(def.feedId, {
-              ...feed,
-              preferredSource: preferredFeed.preferredSource,
-              format: preferredFeed.format,
-              publicationStatus: def.feedId === 'szeged' ? 'APP_READY' : 'RAW_MIRROR',
-            });
-          }
+        const adapterFeeds = adapterFeedsMap.get(def.preferredAdapter) ?? [];
+        const preferredFeed = adapterFeeds.find((f) => f.feedId === def.feedId);
+        if (preferredFeed) {
+          allDiscovered.set(def.feedId, {
+            ...feed,
+            preferredSource: preferredFeed.preferredSource,
+            format: preferredFeed.format,
+            publicationStatus: def.feedId === 'szeged' ? 'APP_READY' : 'RAW_MIRROR',
+          });
         }
       }
     }
 
-    return Array.from(allDiscovered.values()).sort((a, b) => a.feedId.localeCompare(b.feedId));
+    const result = Array.from(allDiscovered.values()).sort((a, b) => a.feedId.localeCompare(b.feedId));
+    this.cachedDiscoveredFeeds = result;
+    return result;
   }
 
   getAdapterForFeed(feed: DiscoveredTransitFeed): TransitFeedSourceAdapter {
