@@ -148,6 +148,17 @@ export class PublisherEngine {
             displayName: feed.displayName,
             region: feed.region,
           });
+          if (feed.feedId === 'szeged' && !isDryRun) {
+            const legacyKey = 'menetrend/szeged/manifest.json';
+            const legacyHead = await this.storage.headObject(legacyKey);
+            if (!legacyHead) {
+              const manifestJson = serializeManifest(existingManifest);
+              await this.storage.putObject(legacyKey, Buffer.from(manifestJson, 'utf8'), {
+                contentType: 'application/json; charset=utf-8',
+                cacheControl: 'no-cache, must-revalidate',
+              });
+            }
+          }
           feedResults.push({
             feedId: feed.feedId,
             status: existingManifest.status,
