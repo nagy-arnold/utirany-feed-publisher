@@ -1,4 +1,6 @@
-﻿import { createHash } from 'node:crypto';
+import { createHash } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { CanonicalRegistry } from '../canonical/registry.js';
 import { canonicalizeGtfsFiles } from '../canonical/canonicalize.js';
 import { buildCatalog, serializeCatalog } from '../catalog/catalog.js';
@@ -133,8 +135,14 @@ export class PublisherEngine {
           candidateSourceHash = candidate.sourceHash;
         }
       } catch (err: any) {
-        // If download fails, preserve existing LKG if available
-        if (existingManifest) {
+        // If acquisition fails and it's szeged without an existing manifest, check seed archive
+        const seedPath = path.resolve(process.cwd(), 'seed/szeged-canonical-gtfs.zip');
+        if (feed.feedId === 'szeged' && !existingManifest && fs.existsSync(seedPath)) {
+          console.warn(`⚠️ Szeged live acquisition failed (${err.message}). Falling back to seed canonical dataset.`);
+          candidateBytes = fs.readFileSync(seedPath);
+          format = 'gtfs_zip';
+          candidateSourceHash = createHash('sha256').update(candidateBytes).digest('hex');
+        } else if (existingManifest) {
           activeManifests.push({
             manifest: existingManifest,
             displayName: feed.displayName,
@@ -148,6 +156,7 @@ export class PublisherEngine {
             sizeBytes: existingManifest.sizeBytes,
             sha256: existingManifest.sha256,
           });
+          continue;
         } else {
           feedResults.push({
             feedId: feed.feedId,
@@ -155,28 +164,30 @@ export class PublisherEngine {
             action: 'FAILED',
             message: `Acquisition failed: ${err.message}`,
           });
+          continue;
         }
-        continue;
       }
 
-      // 4. GTFS Normalization (SQLite v5 -> standard GTFS CSV if needed)
-      let gtfsFiles: Map<string, string>;
-      try {
-        if (format === 'menetbrand_sqlite_v5') {
-          const exported = exportMenetBrandDatabaseToGtfs(candidateBytes);
-          gtfsFiles = new Map(Object.entries(exported));
-        } else {
-          gtfsFiles = readZipEntries(candidateBytes);
-        }
-      } catch (err: any) {
-        rejectedCount++;
-        this.recordRejection(feed, existingManifest, activeManifests, feedResults, `Format conversion failed: ${err.message}`);
-        continue;
-      }
-
-      // 5. Canonicalization (for Szeged APP_READY)
+      // 4. GTFS Normalization, Canonicalization, and Validation
+      let finalZipBuffer: Buffer;
+      let valResult: GtfsValidationResult;
       let canonicalIdentityVersion: number | undefined = undefined;
+
       if (feed.feedId === 'szeged') {
+        let gtfsFiles: Map<string, string>;
+        try {
+          if (format === 'menetbrand_sqlite_v5') {
+            const exported = exportMenetBrandDatabaseToGtfs(candidateBytes);
+            gtfsFiles = new Map(Object.entries(exported));
+          } else {
+            gtfsFiles = readZipEntries(candidateBytes);
+          }
+        } catch (err: any) {
+          rejectedCount++;
+          this.recordRejection(feed, existingManifest, activeManifests, feedResults, `Format conversion failed: ${err.message}`);
+          continue;
+        }
+
         try {
           const reg = this.canonicalRegistry ?? CanonicalRegistry.loadDefaultSzeged();
           const canonResult = canonicalizeGtfsFiles(gtfsFiles, reg, 'MENETBRAND_SZEGED');
@@ -187,20 +198,46 @@ export class PublisherEngine {
           this.recordRejection(feed, existingManifest, activeManifests, feedResults, `Canonicalization failed: ${err.message}`);
           continue;
         }
-      }
 
-      // 6. GTFS Validation
-      const valResult: GtfsValidationResult = validateGtfsPackage(gtfsFiles);
-      if (!valResult.isValid) {
-        rejectedCount++;
-        this.recordRejection(
-          feed,
-          existingManifest,
-          activeManifests,
-          feedResults,
-          `GTFS validation failed: ${valResult.errors.join('; ')}`,
-        );
-        continue;
+        valResult = validateGtfsPackage(gtfsFiles);
+        if (!valResult.isValid) {
+          rejectedCount++;
+          this.recordRejection(feed, existingManifest, activeManifests, feedResults, `GTFS validation failed: ${valResult.errors.join('; ')}`);
+          continue;
+        }
+
+        const regressionError = verifySzegedSemanticRegression(gtfsFiles);
+        if (regressionError) {
+          rejectedCount++;
+          this.recordRejection(feed, existingManifest, activeManifests, feedResults, `Szeged semantic canary failed: ${regressionError}`);
+          continue;
+        }
+
+        finalZipBuffer = createZip(gtfsFiles);
+      } else {
+        // RAW_MIRROR feeds
+        if (format === 'menetbrand_sqlite_v5') {
+          try {
+            const exported = exportMenetBrandDatabaseToGtfs(candidateBytes);
+            const gtfsFiles = new Map(Object.entries(exported));
+            valResult = validateGtfsPackage(gtfsFiles);
+            finalZipBuffer = createZip(gtfsFiles);
+          } catch (err: any) {
+            rejectedCount++;
+            this.recordRejection(feed, existingManifest, activeManifests, feedResults, `Conversion failed: ${err.message}`);
+            continue;
+          }
+        } else {
+          // Standard GTFS ZIP passthrough (e.g. Budapest BKK) - validate directly from buffer
+          valResult = validateGtfsPackage(candidateBytes);
+          finalZipBuffer = candidateBytes;
+        }
+
+        if (!valResult.isValid) {
+          rejectedCount++;
+          this.recordRejection(feed, existingManifest, activeManifests, feedResults, `GTFS validation failed: ${valResult.errors.join('; ')}`);
+          continue;
+        }
       }
 
       // 7. Catastrophe Drop Protection
@@ -225,18 +262,7 @@ export class PublisherEngine {
         continue;
       }
 
-      // 8. Semantic Regression for Szeged APP_READY
-      if (feed.feedId === 'szeged') {
-        const regressionError = verifySzegedSemanticRegression(gtfsFiles);
-        if (regressionError) {
-          rejectedCount++;
-          this.recordRejection(feed, existingManifest, activeManifests, feedResults, `Szeged semantic canary failed: ${regressionError}`);
-          continue;
-        }
-      }
-
       // 9. Atomic Publication to R2
-      const finalZipBuffer = createZip(gtfsFiles);
       const contentSha256 = createHash('sha256').update(finalZipBuffer).digest('hex');
       const artifactKey = `v1/feeds/${feed.feedId}/artifacts/${contentSha256}.zip`;
 

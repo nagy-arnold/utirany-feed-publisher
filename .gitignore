@@ -1,4 +1,4 @@
-﻿node_modules/
+node_modules/
 dist/
 .tmp/
 downloads/
@@ -10,6 +10,7 @@ out/
 *.db
 *.sqlite
 *.zip
+!seed/*.zip
 *.7z
 .DS_Store
 Thumbs.db
