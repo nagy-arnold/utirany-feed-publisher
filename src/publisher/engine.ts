@@ -301,6 +301,14 @@ export class PublisherEngine {
           cacheControl: 'no-cache, must-revalidate',
         });
 
+        // For Szeged: write legacy path for backward compatibility
+        if (feed.feedId === 'szeged') {
+          await this.storage.putObject('menetrend/szeged/manifest.json', Buffer.from(manifestJson, 'utf8'), {
+            contentType: 'application/json; charset=utf-8',
+            cacheControl: 'no-cache, must-revalidate',
+          });
+        }
+
         // Step 4: Apply retention policy
         await cleanFeedHistoricArtifacts(this.storage, feed.feedId, contentSha256, {
           maxHistoricArtifactsPerFeed: 1,
