@@ -1,0 +1,28 @@
+﻿{
+  "name": "utirany-feed-publisher",
+  "version": "1.0.0",
+  "description": "Útirány Nationwide Multi-Source Transit Data Platform",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "discover": "tsx src/cli/discover.ts",
+    "sync": "tsx src/cli/sync.ts",
+    "validate": "tsx src/cli/validate.ts",
+    "test": "node --import tsx --test \"tests/**/*.test.ts\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "npm run typecheck"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.750.0",
+    "adm-zip": "^0.6.0"
+  },
+  "devDependencies": {
+    "@types/adm-zip": "^0.5.8",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.2"
+  }
+}

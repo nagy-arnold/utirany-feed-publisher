@@ -1,0 +1,15 @@
+﻿{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "utirany-feed",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-09-01",
+  "r2_buckets": [
+    {
+      "binding": "TRANSIT_FEEDS",
+      "bucket_name": "utirany-transit-feeds"
+    }
+  ],
+  "observability": {
+    "enabled": true
+  }
+}
