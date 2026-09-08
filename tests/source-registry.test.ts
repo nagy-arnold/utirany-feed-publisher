@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import test from 'node:test';
 import { SourceRegistry } from '../src/sources/registry.js';
 import { DiscoveredTransitFeed, TransitFeedSourceAdapter } from '../src/sources/types.js';
@@ -83,7 +83,7 @@ test('SourceRegistry enforces stable public feed IDs and correct initial statuse
 
   const budapest = feeds.find((f) => f.feedId === 'budapest');
   assert.ok(budapest);
-  assert.equal(budapest.publicationStatus, 'RAW_MIRROR');
+  assert.equal(budapest.publicationStatus, 'APP_READY');
   assert.equal(budapest.preferredSource.authorityLevel, 'OFFICIAL_DIRECT');
 
   const mav = feeds.find((f) => f.feedId === 'mav-volan');

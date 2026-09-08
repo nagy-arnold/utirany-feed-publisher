@@ -349,6 +349,31 @@ export class PublisherEngine {
       const contentSha256 = createHash('sha256').update(finalZipBuffer).digest('hex');
       const artifactKey = `v1/feeds/${feed.feedId}/artifacts/${contentSha256}.zip`;
 
+      // 9b. Companion walking asset detection (e.g. Budapest companion)
+      let walkingCompanionManifest: import('../catalog/manifest.js').WalkingCompanionManifest | undefined = undefined;
+      let companionBuffer: Buffer | null = null;
+      let companionArtifactKey: string | null = null;
+
+      const companionSeedPath = path.resolve(process.cwd(), `seed/utirany-${feed.feedId}-transit-walking-v1.bin`);
+      if (fs.existsSync(companionSeedPath)) {
+        companionBuffer = fs.readFileSync(companionSeedPath);
+        const compSha = createHash('sha256').update(companionBuffer).digest('hex');
+        companionArtifactKey = `v1/feeds/${feed.feedId}/artifacts/${compSha}.bin`;
+        const cleanBase = this.config.publicFeedBaseUrl.replace(/\/+$/, '');
+        const fullCompUrl = `${cleanBase}/${companionArtifactKey}`;
+        walkingCompanionManifest = {
+          downloadUrl: fullCompUrl,
+          artifactUrl: fullCompUrl,
+          contentSha256: compSha,
+          sha256: compSha,
+          byteSize: companionBuffer.length,
+          sizeBytes: companionBuffer.length,
+          schemaVersion: 1,
+          physicalStopCount: valResult.metrics.stopCount,
+          assetName: `utirany-${feed.feedId}-transit-walking-v1.bin`,
+        };
+      }
+
       const manifest = createFeedManifest({
         feedId: feed.feedId,
         city: feed.feedId,
@@ -362,6 +387,7 @@ export class PublisherEngine {
         status: feed.publicationStatus,
         sourceHash: candidateSourceHash || contentSha256,
         canonicalIdentityVersion,
+        walkingCompanion: walkingCompanionManifest,
       });
 
       if (!isDryRun) {
@@ -370,6 +396,18 @@ export class PublisherEngine {
           contentType: 'application/zip',
           cacheControl: 'public, max-age=31536000, immutable',
         });
+
+        // Step 1b: Upload immutable companion asset if present
+        if (companionBuffer && companionArtifactKey) {
+          await this.storage.putObject(companionArtifactKey, companionBuffer, {
+            contentType: 'application/octet-stream',
+            cacheControl: 'public, max-age=31536000, immutable',
+          });
+          const compHead = await this.storage.headObject(companionArtifactKey);
+          if (!compHead || compHead.contentLength !== companionBuffer.length) {
+            throw new Error(`R2 companion artifact verification failed for ${companionArtifactKey}`);
+          }
+        }
 
         // Step 2: Verify artifact exists on R2
         const head = await this.storage.headObject(artifactKey);

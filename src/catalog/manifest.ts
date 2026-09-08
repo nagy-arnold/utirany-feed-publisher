@@ -1,4 +1,4 @@
-﻿import { GtfsMetrics } from '../gtfs/validator.js';
+import { GtfsMetrics } from '../gtfs/validator.js';
 import { FeedPublicationStatus, SourceMetadata } from '../sources/types.js';
 
 export interface FeedManifest {
@@ -34,6 +34,19 @@ export interface FeedManifest {
     readonly stopTimes: number;
     readonly shapes: number;
   };
+  readonly walkingCompanion?: WalkingCompanionManifest;
+}
+
+export interface WalkingCompanionManifest {
+  readonly downloadUrl: string;
+  readonly artifactUrl: string;
+  readonly contentSha256: string;
+  readonly sha256: string;
+  readonly byteSize: number;
+  readonly sizeBytes: number;
+  readonly schemaVersion: number;
+  readonly physicalStopCount: number;
+  readonly assetName: string;
 }
 
 export function createFeedManifest(args: {
@@ -50,6 +63,7 @@ export function createFeedManifest(args: {
   sourceHash: string;
   publishedAt?: string;
   canonicalIdentityVersion?: number;
+  walkingCompanion?: WalkingCompanionManifest;
 }): FeedManifest {
   const publishedAt = args.publishedAt ?? new Date().toISOString();
   const cleanBase = args.publicBaseUrl.replace(/\/+$/, '');
@@ -92,6 +106,7 @@ export function createFeedManifest(args: {
       stopTimes: args.metrics.stopTimeCount,
       shapes: args.metrics.shapeCount,
     },
+    walkingCompanion: args.walkingCompanion,
   };
 }
 
