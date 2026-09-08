@@ -154,12 +154,42 @@ export class PublisherEngine {
       }
 
       if (
-        meta &&
         existingManifest &&
-        meta.sourceHash &&
+        meta?.sourceHash &&
         meta.sourceHash === existingManifest.sourceHash
       ) {
-        // Source has not changed upstream -> SKIP download, retain LKG
+        if (existingManifest.status !== feed.publicationStatus) {
+          // Status changed (e.g. rollback to RAW_MIRROR or promotion to APP_READY)
+          const updatedManifest: FeedManifest = {
+            ...existingManifest,
+            status: feed.publicationStatus,
+            publishedAt: new Date().toISOString(),
+          };
+          if (!isDryRun) {
+            const manifestJson = serializeManifest(updatedManifest);
+            const manifestKey = `v1/feeds/${feed.feedId}/manifest.json`;
+            await this.storage.putObject(manifestKey, Buffer.from(manifestJson, 'utf8'), {
+              contentType: 'application/json; charset=utf-8',
+              cacheControl: 'no-cache, must-revalidate',
+            });
+          }
+          activeManifests.push({
+            manifest: updatedManifest,
+            displayName: feed.displayName,
+            region: feed.region,
+          });
+          feedResults.push({
+            feedId: feed.feedId,
+            status: feed.publicationStatus,
+            action: 'PUBLISHED',
+            message: `Status updated from ${existingManifest.status} to ${feed.publicationStatus}`,
+            sizeBytes: updatedManifest.sizeBytes,
+            sha256: updatedManifest.sha256,
+          });
+          continue;
+        }
+
+        // Source has not changed upstream and status is unchanged -> SKIP download, retain LKG
         unchangedCount++;
         activeManifests.push({
           manifest: existingManifest,
