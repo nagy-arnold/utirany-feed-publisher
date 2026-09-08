@@ -126,7 +126,7 @@ export class SourceRegistry {
             ...feed,
             preferredSource: preferredFeed.preferredSource,
             format: preferredFeed.format,
-            publicationStatus: (def.feedId === 'szeged' || def.feedId === 'budapest') ? 'APP_READY' : 'RAW_MIRROR',
+            publicationStatus: def.feedId === 'szeged' ? 'APP_READY' : 'RAW_MIRROR',
           });
         }
       }
