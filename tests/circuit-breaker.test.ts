@@ -139,7 +139,7 @@ test('Quota circuit breaker: zero additional MenetBrand calls after quota exhaus
       redistributionPolicy: 'PUBLIC_REDISTRIBUTION_ALLOWED',
       priority: 100,
     },
-    status: 'RAW_MIRROR',
+    status: 'APP_READY',
     sourceHash: 'bkk-hash-1',
   });
   await storage.putObject('v1/feeds/budapest/manifest.json', Buffer.from(serializeManifest(budapestLkg), 'utf8'));

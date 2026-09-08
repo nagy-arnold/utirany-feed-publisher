@@ -83,7 +83,7 @@ test('SourceRegistry enforces stable public feed IDs and correct initial statuse
 
   const budapest = feeds.find((f) => f.feedId === 'budapest');
   assert.ok(budapest);
-  assert.equal(budapest.publicationStatus, 'RAW_MIRROR');
+  assert.equal(budapest.publicationStatus, 'APP_READY');
   assert.equal(budapest.preferredSource.authorityLevel, 'OFFICIAL_DIRECT');
 
   const mav = feeds.find((f) => f.feedId === 'mav-volan');
